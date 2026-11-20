@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [改进] India & Forex 看板支持盘中实时刷新：交易时段每 15 分钟以 `--intraday` 模式更新行情卡片（不调用 AI、不写日报、行情未变不推送），顶部嵌入 TradingView 实时滚动行情（`INDIA_FX_LIVE_SYMBOLS`），页面每 5 分钟自动重载；可用 `INDIA_FX_LIVE_ENABLED=false` 关闭。
+- [新功能] 新增可选的 India & Forex Daily 看板：`src/india_fx_tracker.py` 跟踪印度指数、NSE/BSE 个股与外汇对，复用已配置的 LLM 生成每日简报（未配置时降级为规则摘要），由 `india-fx-daily.yml`（`INDIA_FX_ENABLED=true`）每个交易日发布到 GitHub Pages `/india/`，详见 `docs/india-fx-tracker.md`。
+- [新功能] 新增可选的手机报告网站：设置 Repository variable `REPORT_SITE_ENABLED=true` 后，「每日股票分析」完成时由 `report-pages.yml` 将 `reports/*.md` 生成移动端静态页面并发布到 `gh-pages` 分支（GitHub Pages），按日期保留历史，详见 `docs/report-site.md`。
 - [修复] ntfy 推送按服务端默认 4096 字节消息上限分批发送（标题带 `(1/N)` 分页），并以 UTF-8 JSON 提交请求体，修复约 1350 个汉字以上的中文报告因请求体超过 8192 字节被 ntfy 以 HTTP 413 拒收、测试消息正常但完整报告收不到的问题。
 - [改进] 多 Agent standard/full/specialist 分析默认并行执行 TechnicalAgent 与 IntelAgent 的 Wave-1，并在并行线程传播新闻证据、冻结目标日期和 Provider 诊断上下文；新增 `compute_smoothed_weights()` 使用 Beta(6, 6) 对小样本 Skill Opinion 做平滑校准。该方法目前为显式调用的辅助 API，运行时仍由 `compute_weights()` 按每个 horizon 的充足样本门槛、Beta(15, 15) 先验和 unable 惩罚计算权重。
 - [修复] Bark（`api.day.app`）自定义 Webhook 最终 payload 的 `body` 字段改为按 APNs 4096 字节 payload 上限截断（含全局模板渲染结果，按主机名识别 Bark），修复中文完整报告超限导致 Bark 返回 HTTP 500、手机收不到推送而测试消息正常的问题（#2503）。

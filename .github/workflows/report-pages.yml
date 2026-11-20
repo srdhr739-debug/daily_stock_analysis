@@ -1,0 +1,84 @@
+name: 报告网站（GitHub Pages）
+
+# 每日分析完成后，把该次运行上传的 reports/*.md 生成为适合手机浏览的静态网站，
+# 推送到 gh-pages 分支（保留历史报告）。启用方式见 docs/report-site.md。
+on:
+  workflow_run:
+    workflows: ["每日股票分析"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: '要发布的「每日股票分析」运行 ID（留空则只重建现有网站）'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: gh-pages-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # 默认关闭：在 Repository variables 中设置 REPORT_SITE_ENABLED=true 后启用
+    if: >-
+      vars.REPORT_SITE_ENABLED == 'true' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'cancelled')
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 设置 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: pip install "markdown2>=2.4.0"
+
+      - name: 下载分析报告
+        if: github.event_name == 'workflow_run' || inputs.run_id != ''
+        uses: actions/download-artifact@v5
+        continue-on-error: true
+        with:
+          pattern: analysis-reports-*
+          merge-multiple: true
+          path: downloaded
+          run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: 获取现有网站（gh-pages）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads "$remote" gh-pages >/dev/null 2>&1; then
+            git clone --depth 1 --branch gh-pages "$remote" site
+          else
+            git init -b gh-pages site
+            git -C site remote add origin "$remote"
+          fi
+
+      - name: 生成网站
+        run: |
+          python scripts/build_report_site.py \
+            --reports downloaded/reports \
+            --site site \
+            --keep-days "${{ vars.REPORT_SITE_KEEP_DAYS || '60' }}"
+
+      - name: 推送到 gh-pages
+        run: |
+          cd site
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "网站无变化，跳过推送"
+            exit 0
+          fi
+          git commit -m "Update report site $(date -u +%Y-%m-%d)"
+          git push origin gh-pages
