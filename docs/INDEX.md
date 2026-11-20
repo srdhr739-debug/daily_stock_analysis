@@ -67,6 +67,8 @@
 | --- | --- |
 | [部署指南](DEPLOY.md) | 服务器部署、Docker、systemd、Supervisor 等部署方式 |
 | [云端 WebUI 部署](deploy-webui-cloud.md) | 云服务器访问 WebUI 的部署说明 |
+| [手机报告网站](report-site.md) | 用 GitHub Pages 在手机上查看每日报告 |
+| [India & Forex Daily 看板](india-fx-tracker.md) | 印度股市 + 外汇每日手机看板 |
 | [Zeabur 部署](docker/zeabur-deployment.md) | Zeabur 平台部署说明 |
 | [桌面端打包说明](desktop-package.md) | Electron 桌面端和 Web 构建产物打包说明 |
 
