@@ -1,14 +1,26 @@
 name: India & Forex Daily
 
-# 印度股市 + 外汇每日看板：抓取 Yahoo Finance 数据，生成手机网页并发布到 gh-pages 的 /india/。
+# 印度股市 + 外汇看板：交易时段每 15 分钟刷新一次行情卡片（intraday，无 AI），
+# 收盘后生成当日报告（daily，可选 AI 简报）。发布到 gh-pages 的 /india/。
 # 启用方式见 docs/india-fx-tracker.md（需 Repository variable INDIA_FX_ENABLED=true）。
 on:
   schedule:
-    - cron: '20 11 * * 1-5'   # UTC 11:20 = IST 16:50（NSE 15:30 收盘后）
+    - cron: '45 3 * * 1-5'       # IST 09:15 开盘
+    - cron: '*/15 4-9 * * 1-5'   # IST 09:30-15:15 每 15 分钟
+    - cron: '0,15 10 * * 1-5'    # IST 15:30、15:45 收盘前后
+    - cron: '20 11 * * 1-5'      # IST 16:50 收盘后日报（daily）
   workflow_dispatch:
     inputs:
+      mode:
+        description: 'intraday = 仅刷新看板；daily = 生成当日报告（含 AI 简报）'
+        required: true
+        default: daily
+        type: choice
+        options:
+          - daily
+          - intraday
       force:
-        description: '即使当天报告已存在也重新生成'
+        description: '即使当天报告已存在 / 行情未变化也重新生成'
         required: false
         default: false
         type: boolean
@@ -25,32 +37,56 @@ jobs:
     runs-on: ubuntu-latest
     if: vars.INDIA_FX_ENABLED == 'true'
     timeout-minutes: 20
+    env:
+      MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || (github.event.schedule == '20 11 * * 1-5' && 'daily' || 'intraday') }}
+      LIVE_ENABLED: ${{ vars.INDIA_FX_LIVE_ENABLED || 'true' }}
     steps:
+      - name: 判断是否运行
+        id: gate
+        run: |
+          if [ "$MODE" = "intraday" ] && [ "$LIVE_ENABLED" != "true" ]; then
+            echo "INDIA_FX_LIVE_ENABLED != true，跳过盘中刷新"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=$MODE"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: 检出代码
+        if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@v5
 
       - name: 设置 Python
+        if: steps.gate.outputs.run == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
 
       - name: 安装依赖
-        run: pip install -r requirements.txt
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          if [ "$MODE" = "daily" ]; then
+            pip install -r requirements.txt          # AI 简报需要项目完整 LLM 依赖
+          else
+            pip install "yfinance>=0.2.0" "markdown2>=2.4.0"   # 盘中刷新只需行情与渲染
+          fi
 
       - name: 获取现有网站（gh-pages）
+        if: steps.gate.outputs.run == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           if git ls-remote --exit-code --heads "$remote" gh-pages >/dev/null 2>&1; then
-            git clone --depth 1 --branch gh-pages "$remote" site
+            git clone --depth 2 --branch gh-pages "$remote" site
           else
             git init -b gh-pages site
             git -C site remote add origin "$remote"
           fi
 
       - name: 生成看板
+        if: steps.gate.outputs.run == 'true'
         env:
           INDIA_FX_INDICES: ${{ vars.INDIA_FX_INDICES }}
           INDIA_FX_STOCKS: ${{ vars.INDIA_FX_STOCKS }}
@@ -58,6 +94,7 @@ jobs:
           INDIA_FX_AI_ENABLED: ${{ vars.INDIA_FX_AI_ENABLED }}
           INDIA_FX_REPORT_LANGUAGE: ${{ vars.INDIA_FX_REPORT_LANGUAGE }}
           INDIA_FX_KEEP_DAYS: ${{ vars.INDIA_FX_KEEP_DAYS }}
+          INDIA_FX_LIVE_SYMBOLS: ${{ vars.INDIA_FX_LIVE_SYMBOLS }}
           # AI 简报复用项目的 LLM 配置（任选其一；都不配置时使用规则摘要）
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || secrets.GEMINI_MODEL }}
@@ -72,10 +109,12 @@ jobs:
           LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
         run: |
           args="--site site"
+          if [ "$MODE" = "intraday" ]; then args="$args --intraday"; fi
           if [ "${{ inputs.force }}" = "true" ]; then args="$args --force"; fi
           python -m src.india_fx_tracker $args
 
       - name: 推送到 gh-pages
+        if: steps.gate.outputs.run == 'true'
         run: |
           cd site
           git config user.name "github-actions[bot]"
@@ -85,5 +124,17 @@ jobs:
             echo "网站无变化，跳过推送"
             exit 0
           fi
-          git commit -m "Update India & Forex dashboard $(date -u +%Y-%m-%d)"
+          today="$(TZ=Asia/Kolkata date +%Y-%m-%d)"
+          if [ "$MODE" = "intraday" ]; then
+            msg="Live update India & Forex $today"
+            # 同一天的盘中刷新合并为一个提交，避免 gh-pages 历史无限增长
+            if git rev-parse -q --verify HEAD >/dev/null && [ "$(git log -1 --format=%s)" = "$msg" ]; then
+              git commit --amend -m "$msg"
+              git push --force-with-lease origin gh-pages
+              exit 0
+            fi
+          else
+            msg="Update India & Forex daily report $today"
+          fi
+          git commit -m "$msg"
           git push origin gh-pages

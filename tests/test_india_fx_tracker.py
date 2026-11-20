@@ -129,3 +129,38 @@ def test_rule_based_brief_mentions_rupee_and_movers():
     assert "Market mood: positive" in brief
     assert "Top gainer:** A" in brief and "top loser:** B" in brief
     assert "INR weaker vs USD" in brief
+
+
+def test_intraday_refresh_skips_ai_and_daily_report(tmp_path):
+    data = {"^NSEI": _series([100 + i for i in range(30)]), "USDINR=X": _series([83 + 0.01 * i for i in range(30)])}
+    env = dict(ENV, INDIA_FX_STOCKS="NONE.NS")
+    calls = []
+    assert t.run(tmp_path, fetcher=_fetcher(data), env=env, intraday=True,
+                 ai=lambda m, lang: calls.append(1)) == 0
+    root = tmp_path / "india"
+    assert calls == []
+    assert not list((root / "reports").glob("*.md"))
+    latest = (root / "data" / "latest.json").read_text(encoding="utf-8")
+    assert '"mode": "intraday"' in latest
+    index = (root / "index.html").read_text(encoding="utf-8")
+    assert "Live snapshot" in index and "live · rule-based" in index
+    assert 'http-equiv="refresh"' in index
+    assert "embed-widget-ticker-tape.js" in index and "FX_IDC:USDINR" in index
+
+    # unchanged prices -> no rewrite (keeps gh-pages quiet when the market is closed)
+    before = (root / "index.html").stat().st_mtime_ns
+    assert t.run(tmp_path, fetcher=_fetcher(data), env=env, intraday=True) == 0
+    assert (root / "index.html").stat().st_mtime_ns == before
+
+    # end-of-day run after intraday still writes the daily report
+    assert t.run(tmp_path, fetcher=_fetcher(data), env=env, ai=lambda m, lang: None) == 0
+    assert len(list((root / "reports").glob("*.md"))) == 1
+    assert "End-of-day report" in (root / "index.html").read_text(encoding="utf-8")
+
+
+def test_live_symbols_parsing_and_disable():
+    syms = t.load_live_symbols({"INDIA_FX_LIVE_SYMBOLS": "FX_IDC:USDINR:USD/INR, NSE:NIFTY ,bad"})
+    assert syms == [{"proName": "FX_IDC:USDINR", "title": "USD/INR"}, {"proName": "NSE:NIFTY", "title": "NIFTY"}]
+    assert t.load_live_symbols({"INDIA_FX_LIVE_SYMBOLS": "off"}) == []
+    assert t._ticker_html([]) == ""
+    assert len(t.load_live_symbols({})) >= 1

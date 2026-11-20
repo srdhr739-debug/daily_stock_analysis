@@ -8,7 +8,8 @@ project's ``GeminiAnalyzer``) for a short daily brief, and writes a
 mobile-friendly static dashboard plus dated daily reports into ``<site>/india/``.
 
 Usage:
-    python -m src.india_fx_tracker --site site [--force] [--no-ai]
+    python -m src.india_fx_tracker --site site [--force] [--no-ai]   # end-of-day report
+    python -m src.india_fx_tracker --site site --intraday            # live refresh, no AI, no daily report
 
 Configuration (environment variables, all optional; see docs/india-fx-tracker.md):
     INDIA_FX_INDICES          ^NSEI:NIFTY 50,^BSESN:SENSEX,^NSEBANK:NIFTY BANK
@@ -17,6 +18,7 @@ Configuration (environment variables, all optional; see docs/india-fx-tracker.md
     INDIA_FX_AI_ENABLED       true
     INDIA_FX_REPORT_LANGUAGE  en   (en / ta / hi ...; only the AI brief is translated)
     INDIA_FX_KEEP_DAYS        90   (0 = keep all daily reports)
+    INDIA_FX_LIVE_SYMBOLS     TradingView symbols for the live ticker; "off" disables it
 """
 
 from __future__ import annotations
@@ -44,6 +46,14 @@ DEFAULT_PAIRS = "USDINR=X,EURINR=X,GBPINR=X,JPYINR=X,EURUSD=X"
 GROUPS = (("index", "Indices"), ("stock", "Stocks"), ("forex", "Forex"))
 LANGUAGE_NAMES = {"en": "English", "ta": "Tamil", "hi": "Hindi", "te": "Telugu", "kn": "Kannada", "ml": "Malayalam"}
 DISCLAIMER = "For information only. Not investment advice."
+IST = timezone(timedelta(hours=5, minutes=30))
+PAGE_REFRESH_SECONDS = 300
+# TradingView widget symbols (free embeddable widget; some exchange symbols may be unavailable in widgets).
+DEFAULT_LIVE_SYMBOLS = (
+    "BSE:SENSEX:SENSEX,NSE:NIFTY:NIFTY 50,FX_IDC:USDINR:USD/INR,FX_IDC:EURINR:EUR/INR,"
+    "FX_IDC:GBPINR:GBP/INR,FX_IDC:JPYINR:JPY/INR,FX:EURUSD:EUR/USD"
+)
+TICKER_SCRIPT = "https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js"
 
 # A fetcher returns a list of (date "YYYY-MM-DD", close) sorted ascending, or [] when unavailable.
 Fetcher = Callable[[str], List[Tuple[str, float]]]
@@ -89,6 +99,23 @@ def load_instruments(env: Optional[Dict[str, str]] = None) -> List[Instrument]:
         + _parse_list(env.get("INDIA_FX_STOCKS") or DEFAULT_STOCKS, "stock")
         + _parse_list(env.get("INDIA_FX_PAIRS") or DEFAULT_PAIRS, "forex")
     )
+
+
+def load_live_symbols(env: Optional[Dict[str, str]] = None) -> List[Dict[str, str]]:
+    """Parse INDIA_FX_LIVE_SYMBOLS ("EXCHANGE:SYMBOL[:Title],...") for the TradingView ticker."""
+    env = os.environ if env is None else env
+    raw = (env.get("INDIA_FX_LIVE_SYMBOLS") or DEFAULT_LIVE_SYMBOLS).strip()
+    if raw.lower() in {"off", "false", "none", "0"}:
+        return []
+    out: List[Dict[str, str]] = []
+    for part in raw.split(","):
+        bits = [b.strip() for b in part.split(":")]
+        if len(bits) < 2 or not bits[0] or not bits[1]:
+            continue
+        pro = f"{bits[0]}:{bits[1]}"
+        title = ":".join(bits[2:]).strip() or bits[1]
+        out.append({"proName": pro, "title": title})
+    return out
 
 
 def _env_bool(value: Optional[str], default: bool) -> bool:
@@ -335,16 +362,21 @@ article{background:var(--card);border:1px solid var(--line);border-radius:12px;p
 article table{display:block;overflow-x:auto;border-collapse:collapse;max-width:100%;font-size:14px}
 article th,article td{border:1px solid var(--line);padding:6px 8px;white-space:nowrap;text-align:right}
 article th:first-child,article td:first-child{text-align:left}
+.live{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--up)}
+.ticker{margin:0 -16px 8px;min-height:46px}
 footer{color:var(--muted);font-size:12px;text-align:center;padding:24px 16px}
 """
 
 
-def _page(title: str, body: str, back: Optional[str] = None) -> str:
+def _page(title: str, body: str, back: Optional[str] = None, refresh: int = 0) -> str:
     back_link = f'<a href="{back}">&larr; Back</a>' if back else ""
+    refresh_meta = f'<meta http-equiv="refresh" content="{int(refresh)}">\n' if refresh > 0 else ""
     return (
         "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
         '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
         '<meta name="robots" content="noindex">\n'
+        f"{refresh_meta}"
         f"<title>{html.escape(title)}</title>\n<style>{CSS}</style>\n</head>\n<body>\n"
         f"<header>{back_link}<h1>{html.escape(title)}</h1></header>\n<main>\n{body}\n</main>\n</body>\n</html>\n"
     )
@@ -396,6 +428,23 @@ def _quote_card(m: Metrics) -> str:
     )
 
 
+def _ticker_html(symbols: List[Dict[str, str]]) -> str:
+    if not symbols:
+        return ""
+    cfg = json.dumps({"symbols": symbols, "showSymbolLogo": False, "isTransparent": True,
+                      "displayMode": "compact", "locale": "en"})
+    # </ cannot appear inside JSON produced from our own config, but escape defensively.
+    cfg = cfg.replace("</", "<\\/")
+    return (
+        '<div class="ticker"><div class="tradingview-widget-container" id="tv-ticker">'
+        '<div class="tradingview-widget-container__widget"></div></div></div>\n'
+        "<script>(function(){var c=" + cfg + ";"
+        "c.colorTheme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';"
+        "var s=document.createElement('script');s.src='" + TICKER_SCRIPT + "';s.async=true;"
+        "s.text=JSON.stringify(c);document.getElementById('tv-ticker').appendChild(s);})();</script>"
+    )
+
+
 def report_markdown(date: str, metrics: List[Metrics], brief: str, brief_source: str) -> str:
     lines = [f"# India & Forex Daily · {date}", "", f"## Brief ({brief_source})", "", brief, ""]
     for group, title in GROUPS:
@@ -423,16 +472,20 @@ def _data_date(metrics: List[Metrics]) -> Optional[str]:
     return None
 
 
-def write_site(site: Path, date: str, metrics: List[Metrics], brief: str, brief_source: str, keep_days: int) -> None:
+def write_site(site: Path, date: str, metrics: List[Metrics], brief: str, brief_source: str, keep_days: int,
+               *, write_report: bool = True, live_symbols: Optional[List[Dict[str, str]]] = None) -> None:
     root = site / "india"
     reports = root / "reports"
     data_dir = root / "data"
     reports.mkdir(parents=True, exist_ok=True)
     data_dir.mkdir(parents=True, exist_ok=True)
 
+    now = datetime.now(timezone.utc)
     payload = {
         "date": date,
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "generated_at": now.strftime("%Y-%m-%d %H:%M UTC"),
+        "generated_at_ist": now.astimezone(IST).strftime("%Y-%m-%d %H:%M IST"),
+        "mode": "daily" if write_report else "intraday",
         "brief": brief,
         "brief_source": brief_source,
         "instruments": [asdict(m) for m in metrics],
@@ -440,8 +493,9 @@ def write_site(site: Path, date: str, metrics: List[Metrics], brief: str, brief_
     (data_dir / f"{date}.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     (data_dir / "latest.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
 
-    md = report_markdown(date, metrics, brief, brief_source)
-    (reports / f"{date}.md").write_text(md, encoding="utf-8")
+    if write_report:
+        md = report_markdown(date, metrics, brief, brief_source)
+        (reports / f"{date}.md").write_text(md, encoding="utf-8")
 
     # prune old days
     if keep_days > 0:
@@ -461,10 +515,12 @@ def write_site(site: Path, date: str, metrics: List[Metrics], brief: str, brief_
         )
 
     # dashboard
+    status = "Live snapshot" if not write_report else "End-of-day report"
     parts = [
-        f'<p class="meta">Market data as of {html.escape(date)} (Yahoo Finance, may be delayed) · '
-        f'updated {html.escape(payload["generated_at"])}</p>',
-        f'<h2>Today\'s brief · {html.escape(brief_source)}</h2><div class="card brief">{render_markdown(brief)}</div>',
+        _ticker_html(live_symbols or []),
+        f'<p class="live"><span class="dot"></span>{status} · updated {html.escape(payload["generated_at_ist"])}'
+        f' · data as of {html.escape(date)}</p>',
+        f'<h2>Brief · {html.escape(brief_source)}</h2><div class="card brief">{render_markdown(brief)}</div>',
     ]
     for group, title in GROUPS:
         cards = [_quote_card(m) for m in metrics if m.group == group]
@@ -475,8 +531,13 @@ def write_site(site: Path, date: str, metrics: List[Metrics], brief: str, brief_
             f'<a href="reports/{d}.html"><span>{d}</span><span class="meta">Daily report</span></a>' for d in days
         )
         parts.append(f'<h2>Daily activity</h2><div class="list">{links}</div>')
-    parts.append(f"<footer>{DISCLAIMER}</footer>")
-    (root / "index.html").write_text(_page("India & Forex Daily", "\n".join(parts)), encoding="utf-8")
+    parts.append(
+        "<footer>Cards: Yahoo Finance, refreshed about every 15 min in market hours (may be delayed). "
+        f"Ticker: TradingView. Page reloads every {PAGE_REFRESH_SECONDS // 60} min. {DISCLAIMER}</footer>"
+    )
+    (root / "index.html").write_text(
+        _page("India & Forex Daily", "\n".join(parts), refresh=PAGE_REFRESH_SECONDS), encoding="utf-8"
+    )
 
     (site / ".nojekyll").write_text("", encoding="utf-8")
     if not (site / "index.html").exists():
@@ -490,8 +551,18 @@ def write_site(site: Path, date: str, metrics: List[Metrics], brief: str, brief_
 # --------------------------------------------------------------------------- main
 
 
+def _same_snapshot(latest: Path, metrics: List[Metrics]) -> bool:
+    """True when latest.json already holds exactly these instrument values (market closed / no new ticks)."""
+    try:
+        old = json.loads(latest.read_text(encoding="utf-8")).get("instruments")
+    except (OSError, ValueError):
+        return False
+    return old == json.loads(json.dumps([asdict(m) for m in metrics]))
+
+
 def run(site: Path, *, fetcher: Fetcher = yfinance_fetcher, use_ai: bool = True, force: bool = False,
-        env: Optional[Dict[str, str]] = None, ai: Callable[[List[Metrics], str], Optional[str]] = ai_brief) -> int:
+        intraday: bool = False, env: Optional[Dict[str, str]] = None,
+        ai: Callable[[List[Metrics], str], Optional[str]] = ai_brief) -> int:
     env = os.environ if env is None else env
     instruments = load_instruments(env)
     metrics = collect(instruments, fetcher)
@@ -499,6 +570,21 @@ def run(site: Path, *, fetcher: Fetcher = yfinance_fetcher, use_ai: bool = True,
     if date is None:
         logger.error("no market data fetched for any instrument; site left unchanged")
         return 1
+
+    live_symbols = load_live_symbols(env)
+    try:
+        keep_days = int(env.get("INDIA_FX_KEEP_DAYS") or 90)
+    except ValueError:
+        keep_days = 90
+
+    if intraday:
+        if not force and _same_snapshot(site / "india" / "data" / "latest.json", metrics):
+            logger.info("prices unchanged since last refresh (market closed?); site left unchanged")
+            return 0
+        write_site(site, date, metrics, rule_based_brief(metrics), "live · rule-based", keep_days,
+                   write_report=False, live_symbols=live_symbols)
+        logger.info("refreshed live dashboard (data as of %s)", date)
+        return 0
 
     existing = site / "india" / "reports" / f"{date}.md"
     if existing.exists() and not force:
@@ -514,11 +600,7 @@ def run(site: Path, *, fetcher: Fetcher = yfinance_fetcher, use_ai: bool = True,
     if not brief:
         brief = rule_based_brief(metrics)
 
-    try:
-        keep_days = int(env.get("INDIA_FX_KEEP_DAYS") or 90)
-    except ValueError:
-        keep_days = 90
-    write_site(site, date, metrics, brief, source, keep_days)
+    write_site(site, date, metrics, brief, source, keep_days, live_symbols=live_symbols)
     ok = sum(1 for m in metrics if m.ok)
     logger.info("wrote India & Forex report for %s (%d/%d instruments, brief: %s)", date, ok, len(metrics), source)
     return 0
@@ -529,6 +611,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--site", default="site", help="site output directory; pages go to <site>/india/")
     parser.add_argument("--force", action="store_true", help="rebuild even if today's report already exists")
     parser.add_argument("--no-ai", action="store_true", help="skip the LLM brief and use the rule-based summary")
+    parser.add_argument("--intraday", action="store_true",
+                        help="live refresh: update the dashboard only (no AI, no daily report)")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     try:
@@ -537,7 +621,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         load_dotenv()
     except Exception:
         pass
-    return run(Path(args.site), use_ai=not args.no_ai, force=args.force)
+    return run(Path(args.site), use_ai=not args.no_ai, force=args.force, intraday=args.intraday)
 
 
 if __name__ == "__main__":
