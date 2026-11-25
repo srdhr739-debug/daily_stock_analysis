@@ -1,10 +1,10 @@
 {
  "date": "2026-11-25",
- "generated_at": "2026-11-25 10:53 UTC",
- "generated_at_ist": "2026-11-25 16:23 IST",
- "mode": "intraday",
+ "generated_at": "2026-11-25 12:20 UTC",
+ "generated_at_ist": "2026-11-25 17:50 IST",
+ "mode": "daily",
  "brief": "- **Market mood: positive.** NIFTY 50 +1.85%, SENSEX +1.82%, NIFTY BANK +1.79%.\n- **Top gainer:** HDFCBANK +3.47%; **top loser:** RELIANCE +1.70%.\n- **Rupee:** USD/INR 92.2200 (-0.75%), INR stronger vs USD.\n- **Watch:** NIFTY 50: RSI overbought (≥70), 6-month high; SENSEX: RSI overbought (≥70), 6-month high; NIFTY BANK: RSI overbought (≥70); HDFCBANK: RSI overbought (≥70), 6-month high, Big move today; ICICIBANK: RSI overbought (≥70), 6-month high, Big move today; USD/INR: RSI oversold (≤30), 6-month low; EUR/INR: RSI oversold (≤30), 6-month low; GBP/INR: RSI oversold (≤30), 6-month low.",
- "brief_source": "live · rule-based",
+ "brief_source": "rule-based",
  "instruments": [
   {
    "symbol": "^NSEI",
@@ -637,13 +637,13 @@
    "group": "forex",
    "ok": true,
    "date": "2026-11-25",
-   "close": 1.0949305295944214,
-   "change_pct": 0.37775492747458284,
-   "change_5d_pct": -0.3963566420318254,
-   "change_1m_pct": -2.009192096248158,
-   "ma20": 1.1091431200504303,
-   "ma50": 1.1207086944580078,
-   "rsi14": 31.092644514357332,
+   "close": 1.0954102277755737,
+   "change_pct": 0.4217312576301424,
+   "change_5d_pct": -0.3527194565999259,
+   "change_1m_pct": -1.9662615074568457,
+   "ma20": 1.109167104959488,
+   "ma50": 1.120718288421631,
+   "rsi14": 31.84891708278346,
    "high_6m": 1.1687841415405273,
    "low_6m": 1.090809941291809,
    "trend": "Downtrend",
@@ -678,7 +678,7 @@
     1.0969723463058472,
     1.097152829170227,
     1.090809941291809,
-    1.0949305295944214
+    1.0954102277755737
    ]
   }
  ]
