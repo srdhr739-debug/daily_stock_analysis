@@ -1,10 +1,10 @@
 {
  "date": "2026-11-27",
- "generated_at": "2026-11-27 10:50 UTC",
- "generated_at_ist": "2026-11-27 16:20 IST",
- "mode": "intraday",
+ "generated_at": "2026-11-27 12:14 UTC",
+ "generated_at_ist": "2026-11-27 17:44 IST",
+ "mode": "daily",
  "brief": "- **Market mood: negative.** NIFTY 50 -1.07%, SENSEX -1.17%, NIFTY BANK -0.78%.\n- **Top gainer:** HDFCBANK -0.55%; **top loser:** INFY -2.68%.\n- **Rupee:** USD/INR 92.9800 (+0.80%), INR weaker vs USD.\n- **Watch:** HDFCBANK: RSI overbought (≥70).",
- "brief_source": "live · rule-based",
+ "brief_source": "rule-based",
  "instruments": [
   {
    "symbol": "^NSEI",
@@ -614,13 +614,13 @@
    "group": "forex",
    "ok": true,
    "date": "2026-11-27",
-   "close": 1.0964912176132202,
-   "change_pct": -0.047150876502088934,
-   "change_5d_pct": -0.043859692019332375,
-   "change_1m_pct": -1.7105273843815438,
-   "ma20": 1.1071902215480804,
-   "ma50": 1.1187127900123597,
-   "rsi14": 33.892207903372054,
+   "close": 1.0969723463058472,
+   "change_pct": -0.0032926286195333887,
+   "change_5d_pct": 0.0,
+   "change_1m_pct": -1.6673990084320467,
+   "ma20": 1.1072142779827119,
+   "ma50": 1.118722412586212,
+   "rsi14": 34.308689305527906,
    "high_6m": 1.1687841415405273,
    "low_6m": 1.090809941291809,
    "trend": "Downtrend",
@@ -655,7 +655,7 @@
     1.090809941291809,
     1.0962268114089966,
     1.097008466720581,
-    1.0964912176132202
+    1.0969723463058472
    ]
   }
  ]
